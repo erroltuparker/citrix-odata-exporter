@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM ubuntu:latest
 
 RUN apk update
 RUN apk add python3
