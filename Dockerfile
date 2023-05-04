@@ -2,8 +2,8 @@ FROM ubuntu:latest
 
 RUN apt update
 RUN apt install python3 curl iputils* krb5-user -y
-COPY pip_requirements.txt .
-RUN pip3 install -r pip_requirements.txt
+COPY pip-requirements.txt .
+RUN pip3 install -r pip-requirements.txt
 COPY version/VERSION /exporter/
 COPY citrix-exporter.py /exporter/
 COPY metrics.json /exporter/
