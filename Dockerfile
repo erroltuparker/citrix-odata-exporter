@@ -1,8 +1,8 @@
 FROM ubuntu:latest
 
 RUN apt update
-RUN export DEBIAN_FRONTEND=noninteractive
-RUN apt install python3 python3-pip curl iputils* krb5-user -y
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt install python3 python3-pip curl iputils* krb5-user -yq
 COPY pip-requirements.txt .
 RUN pip3 install -r pip-requirements.txt
 COPY version/VERSION /exporter/
