@@ -1,14 +1,14 @@
 {
   "Sessions":{
     "counter":[
-      ["StateDate","citrixvdi_sessions_logontime"],
-      ["LogOnDuration","citrixvdi_sessions_logonduration"],
-      ["EndDate","citrixvdi_sessions_logofftime"],
-      ["ConnectionStateChangeDate","citrixvdi_sessions_connectionchangetime"]
+      ["StateDate","citrix_sessions_logontime"],
+      ["LogOnDuration","citrix_sessions_logonduration"],
+      ["EndDate","citrix_sessions_logofftime"],
+      ["ConnectionStateChangeDate","citrix_sessions_connectionchangetime"]
     ],
     "gauges":[
-      ["ConnectionState","citrixvdi_sessions_connectionstate"],
-      ["LogonDuration","citrixvdi_sessions_logonduration"]
+      ["ConnectionState","citrix_sessions_connectionstate"],
+      ["LogonDuration","citrix_sessions_logonduration"]
     ],
     "labels": [
         ["SessionKey", "MachineId","UserId"]
@@ -16,14 +16,14 @@
   },
   "Catalogs":{
     "gauges":[
-      ["LifecycleState","citrixvdi_catalogs_lifecyclestate"],
-      ["ProvisioningType","citrixvdi_catalogs_provisioningtype"],
-      ["PersistentUserChanges","citrixvdi_catalogs_persistentuserchanges"],
-      ["AllocationType","citrixvdi_catalogs_allocationtype"],
-      ["SessionSupport","citrixvdi_catalogs_sessionsupport"]
+      ["LifecycleState","citrix_catalogs_lifecyclestate"],
+      ["ProvisioningType","citrix_catalogs_provisioningtype"],
+      ["PersistentUserChanges","citrix_catalogs_persistentuserchanges"],
+      ["AllocationType","citrix_catalogs_allocationtype"],
+      ["SessionSupport","citrix_catalogs_sessionsupport"]
     ],
     "enumasinfo":[
-      ["Name","citrixvdi_catalogs_name"]
+      ["Name","citrix_catalogs_name"]
     ],
     "labels": [
       ["Id"]
@@ -31,8 +31,8 @@
   },
   "Users":{
     "enumasinfo":[
-      ["UserName","citrixvdi_users_username"],
-      ["Upn","citrixvdi_users_upn"]
+      ["UserName","citrix_users_username"],
+      ["Upn","citrix_users_upn"]
     ],
     "labels": [
       ["Id"]

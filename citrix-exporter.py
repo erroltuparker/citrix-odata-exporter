@@ -15,12 +15,13 @@ from prometheus_client import start_http_server
 from prometheus_client.core import GaugeMetricFamily, CounterMetricFamily, REGISTRY, InfoMetricFamily
 from urllib3.exceptions import InsecureRequestWarning
 from urllib3.exceptions import SubjectAltNameWarning
+from requests_kerberos import HTTPKerberosAuth, REQUIRED
 from requests.auth import HTTPBasicAuth
 from tenacity import retry, RetryError, retry_if_exception_type
 from tenacity import stop_after_attempt, wait_fixed, retry_if_result
 
-NS_USERNAME_FILE = '/mnt/nslogin/username'
-NS_PASSWORD_FILE = '/mnt/nslogin/password'
+citrix_USERNAME_FILE = '/mnt/citrixlogin/username'
+citrix_PASSWORD_FILE = '/mnt/citrixlogin/password'
 DEPLOYMENT_WITH_CPX = 'sidecar'
 CPX_CRED_DIR = '/var/deviceinfo'
 CPX_CRED_FILE = '/var/deviceinfo/random_id'
@@ -98,8 +99,8 @@ def start_exporter_server(port):
         print(e)
 
 
-def retry_cpx_password_read(ns_password):
-    if ns_password is not None:
+def retry_cpx_password_read(citrix_password):
+    if citrix_password is not None:
         return False
     return True
 
@@ -110,13 +111,13 @@ def retry_cpx_password_read(ns_password):
 
 
 @retry(stop=stop_after_attempt(120), wait=wait_fixed(1), retry=retry_if_result(retry_cpx_password_read))
-def read_cpx_credentials(ns_password):
+def read_cpx_credentials(citrix_password):
     if os.path.isdir(CPX_CRED_DIR):
         if os.path.isfile(CPX_CRED_FILE) and os.path.getsize(CPX_CRED_FILE):
             try:
                 with open(CPX_CRED_FILE, 'r') as fr:
-                    ns_password = fr.read()
-                    if ns_password is not None:
+                    citrix_password = fr.read()
+                    if citrix_password is not None:
                         logger.info(
                             "SIDECAR Mode: Successfully read crendetials for CPX")
                     else:
@@ -125,21 +126,21 @@ def read_cpx_credentials(ns_password):
             except IOError as e:
                 logger.debug(
                     "SIDECAR Mode: IOError {}, while reading CPX crednetials from file".format(e))
-    return ns_password
+    return citrix_password
 
 
-def get_cpx_credentials(ns_user, ns_password):
+def get_cpx_credentials(citrix_user, citrix_password):
     'Get ns credenttials when CPX mode'
 
     logger.info("SIDECAR Mode: Trying to get credentials for CPX")
     try:
-        ns_password = read_cpx_credentials(ns_password)
+        citrix_password = read_cpx_credentials(citrix_password)
     except RetryError as e:
         logger.error('SIDECAR Mode: Unable to fetch CPX credentials {}'.format(e))
 
-    if ns_password is not None:
-        ns_user = 'nsroot'
-    return ns_user, ns_password
+    if citrix_password is not None:
+        citrix_user = 'nsroot'
+    return citrix_user, citrix_password
 
 # Priority order for credentials follows the order config.yaml input > env variables
 # First env values are populated which can then be overwritten by config values if present.
@@ -148,53 +149,16 @@ def get_cpx_credentials(ns_user, ns_password):
 def get_login_credentials(args):
     '''Gets the login credentials i.e ADC username and passoword'''
 
-    ns_user = os.environ.get("NS_USER")
-    ns_password = os.environ.get("NS_PASSWORD")
+    citrix_user = os.environ.get("citrix_USER")
+    citrix_password = os.environ.get("citrix_PASSWORD")
 
-    deployment_mode = os.environ.get("NS_DEPLOYMENT_MODE", "")
-    if deployment_mode.lower() == 'sidecar':
-        logger.info('ADC is running as sidecar')
-    else:
-        logger.info('ADC is running as standalone')
+    if hasattr(args, 'username'):
+        citrix_user = args.username
 
-    if os.environ.get('KUBERNETES_SERVICE_HOST') is not None:
-        if os.path.isfile(NS_USERNAME_FILE):
-            try:
-                with open(NS_USERNAME_FILE, 'r') as f:
-                    ns_user = f.read().rstrip()
-            except Exception as e:
-                logger.error('Error while reading secret. Verify if secret is properly mounted:{}'.format(e))
+    if hasattr(args, 'password'):
+        citrix_password = args.password
 
-        if os.path.isfile(NS_PASSWORD_FILE):
-            try:
-                with open(NS_PASSWORD_FILE, 'r') as f:
-                    ns_password = f.read().rstrip()
-            except Exception as e:
-                logger.error('Error while reading secret. Verify if secret is properly mounted:{}'.format(e))
-
-        if ns_user is None and ns_password is None:
-            if deployment_mode.lower() == DEPLOYMENT_WITH_CPX:
-                ns_user, ns_password = get_cpx_credentials(
-                    ns_user, ns_password)
-
-    else:
-        if hasattr(args, 'username'):
-            ns_user = args.username
-
-        if hasattr(args, 'password'):
-            ns_password = args.password
-
-    return ns_user, ns_password
-
-
-def get_ns_session_protocol(args):
-    'Get ns session protocol to access ADC'
-    secure = args.secure.lower()
-    if secure == 'yes':
-        ns_protocol = 'https'
-    else:
-        ns_protocol = 'http'
-    return ns_protocol
+    return citrix_user, citrix_password
 
 
 def retry_login(value):
@@ -208,67 +172,62 @@ def retry_get(value):
     return x1 == 'retry'
 
 
-def get_ns_cert_path(args):
-    'Get ns cert path if protocol is secure option is set'
+def get_citrix_cert_path(args):
+    'Get ns cert path'
     if args.cacert_path:
-        ns_cacert_path = args.cacert_path
+        citrix_cacert_path = args.cacert_path
     else:
-        ns_cacert_path = os.environ.get("NS_CACERT_PATH", None)
+        citrix_cacert_path = os.environ.get("citrix_CACERT_PATH", None)
 
-    if not ns_cacert_path:
+    if not citrix_cacert_path:
         logger.error('EXITING : Certificate Validation enabled but cert path not provided')
         sys.exit()
 
-    if not os.path.isfile(ns_cacert_path):
-        logger.error('EXITING: ADC Cert validation enabled but CA cert does not exist {}'.format(ns_cacert_path))
+    if not os.path.isfile(citrix_cacert_path):
+        logger.error('EXITING: ADC Cert validation enabled but CA cert does not exist {}'.format(citrix_cacert_path))
         sys.exit()
 
     logger.info('CA certificate path found for validation')
-    return ns_cacert_path
+    return citrix_cacert_path
 
 
-def get_cert_validation_args(args, ns_protocol):
+def get_cert_validation_args(args):
     'Get ns validation args, if validation set, then fetch cert path'
     if args.validate_cert:
-        ns_cert_validation = args.validate_cert.lower()
+        citrix_cert_validation = args.validate_cert.lower()
     else:
-        ns_cert_validation = os.environ.get("NS_VALIDATE_CERT", 'no').lower()
+        citrix_cert_validation = os.environ.get("citrix_VALIDATE_CERT", 'no').lower()
 
-    if ns_cert_validation == 'yes':
-        if ns_protocol == 'https':
-            logger.info('Cert Validation Enabled')
-            ns_cert = get_ns_cert_path(args)
-        else:
-            logger.error('EXITING: Cert validation enabled on insecure session')
-            sys.exit()
+    if citrix_cert_validation == 'yes':
+        logger.info('Cert Validation Enabled')
+        citrix_cert = get_citrix_cert_path(args)
     else:
-        ns_cert = False  # Set ns_sert as False for no cert validation
-    return ns_cert
+        citrix_cert = False  # Set citrix_sert as False for no cert validation
+    return citrix_cert
 
-class CitrixAdcCollector(object):
+class citrixCollector(object):
     ''' Add/Update labels for metrics using prometheus apis.'''
 
     SUCCESS = 'SUCCESS'
     FAILURE = 'FAILURE'
     INVALID = 'INVALID'
 
-    def __init__(self, nsip, metrics, username, password, protocol,
-                 nitro_timeout, ns_cert):
+    def __init__(self, nsip, metrics, username, password,
+                 nitro_timeout, citrix_cert):
         self.nsip = nsip
         self.metrics = metrics
         self.username = username
         self.password = password
-        self.protocol = protocol
         self.nitro_timeout = nitro_timeout
-        self.ns_cert = ns_cert
-        self.ns_session = None
+        self.citrix_cert = citrix_cert
+        self.citrix_session = None
         self.stats_access_pending = False
-        self.ns_session_pending = False
+        self.citrix_session_pending = False
 
-    # Collect metrics from Citrix ADC
+    # Collect metrics from Citrix
     def collect(self):
 
-        if self.stats_access_pending or self.ns_session_pending:
+        if self.stats_access_pending or self.citrix_session_pending:
             yield self.populate_probe_status(self.FAILURE)
             return
 
@@ -287,7 +246,7 @@ class CitrixAdcCollector(object):
                 logger.error('Could not collect metric :{}'.format(e))
 
             if status == self.FAILURE:
-                self.ns_session_clear()
+                self.citrix_session_clear()
                 yield self.populate_probe_status(status)
                 return
 
@@ -309,15 +268,15 @@ class CitrixAdcCollector(object):
             if(type(entity_stats) is not list):
                 entity_stats = [entity_stats]
 
-            for ns_metric_name, prom_metric_name in entity.get('counters', []):
+            for citrix_metric_name, prom_metric_name in entity.get('counters', []):
                 c = CounterMetricFamily(
-                    prom_metric_name, ns_metric_name, labels=label_names)
+                    prom_metric_name, citrix_metric_name, labels=label_names)
                 for data_item in entity_stats:
                     if not data_item:
                         continue
 
-                    if ns_metric_name not in data_item.keys():
-                        logger.info('Counter stats {} not enabled for entity: {}'.format(ns_metric_name, entity_name))
+                    if citrix_metric_name not in data_item.keys():
+                        logger.info('Counter stats {} not enabled for entity: {}'.format(citrix_metric_name, entity_name))
                         break
 
                     if('labels' in entity.keys()):
@@ -328,22 +287,22 @@ class CitrixAdcCollector(object):
                         label_values = [self.nsip]
                     try:
                         c.add_metric(label_values, float(
-                            data_item[ns_metric_name]))
+                            data_item[citrix_metric_name]))
                     except Exception as e:
-                        logger.error('Caught exception while adding counter {} to {}: {}'.format(ns_metric_name, entity_name, str(e)))
+                        logger.error('Caught exception while adding counter {} to {}: {}'.format(citrix_metric_name, entity_name, str(e)))
 
                 yield c
 
 
-            for ns_metric_name, prom_metric_name in entity.get('time', []):
+            for citrix_metric_name, prom_metric_name in entity.get('time', []):
                 t = CounterMetricFamily(
-                    prom_metric_name, ns_metric_name, labels=label_names)
+                    prom_metric_name, citrix_metric_name, labels=label_names)
                 for data_item in entity_stats:
                     if not data_item:
                         continue
 
-                    if ns_metric_name not in data_item.keys():
-                        logger.info('Counter stats {} not enabled for entity: {}'.format(ns_metric_name, entity_name))
+                    if citrix_metric_name not in data_item.keys():
+                        logger.info('Counter stats {} not enabled for entity: {}'.format(citrix_metric_name, entity_name))
                         break
 
                     if('labels' in entity.keys()):
@@ -354,21 +313,21 @@ class CitrixAdcCollector(object):
                         label_values = [self.nsip]
                     try:
                         t.add_metric(label_values, float(
-                            int((datetime.strptime(data_item[ns_metric_name], '%a %b %d %H:%M:%S %Y') - EPOCH_TIME).total_seconds())))
+                            int((datetime.strptime(data_item[citrix_metric_name], '%a %b %d %H:%M:%S %Y') - EPOCH_TIME).total_seconds())))
                     except Exception as e:
-                        logger.error('Caught exception while adding counter {} to {}: {}'.format(ns_metric_name, entity_name, str(e)))
+                        logger.error('Caught exception while adding counter {} to {}: {}'.format(citrix_metric_name, entity_name, str(e)))
 
                 yield t
 
-            for ns_metric_name, prom_metric_name in entity.get('enumasinfo', []):
+            for citrix_metric_name, prom_metric_name in entity.get('enumasinfo', []):
                 en = InfoMetricFamily(
-                    prom_metric_name, ns_metric_name, labels=label_names)
+                    prom_metric_name, citrix_metric_name, labels=label_names)
                 for data_item in entity_stats:
                     if not data_item:
                         continue
 
-                    if ns_metric_name not in data_item.keys():
-                        logger.info('EnumAsInfo stats {} not enabled for entity: {}'.format(ns_metric_name, entity_name))
+                    if citrix_metric_name not in data_item.keys():
+                        logger.info('EnumAsInfo stats {} not enabled for entity: {}'.format(citrix_metric_name, entity_name))
                         break
 
                     if('labels' in entity.keys()):
@@ -379,24 +338,24 @@ class CitrixAdcCollector(object):
                         label_values = [self.nsip]
                     try:
                         en.add_metric(label_values, dict({
-                            prom_metric_name: data_item[ns_metric_name]}
+                            prom_metric_name: data_item[citrix_metric_name]}
                         ))
                     except Exception as e:
-                        logger.error('Caught exception while adding enumasinfo {} to {}: {}'.format(ns_metric_name, entity_name, str(e)))
+                        logger.error('Caught exception while adding enumasinfo {} to {}: {}'.format(citrix_metric_name, entity_name, str(e)))
 
                 yield en
 
             # Provide collected metric to Prometheus as a gauge
-            for ns_metric_name, prom_metric_name in entity.get('gauges', []):
+            for citrix_metric_name, prom_metric_name in entity.get('gauges', []):
                 g = GaugeMetricFamily(
-                    prom_metric_name, ns_metric_name, labels=label_names)
+                    prom_metric_name, citrix_metric_name, labels=label_names)
 
                 for data_item in entity_stats:
                     if not data_item:
                         continue
 
-                    if ns_metric_name not in data_item.keys():
-                        logger.info('Gauge stat {} not enabled for entity: {}'.format(ns_metric_name, entity_name))
+                    if citrix_metric_name not in data_item.keys():
+                        logger.info('Gauge stat {} not enabled for entity: {}'.format(citrix_metric_name, entity_name))
                         break
 
                     if('labels' in entity.keys()):
@@ -407,9 +366,9 @@ class CitrixAdcCollector(object):
                         label_values = [self.nsip]
                     try:
                         g.add_metric(label_values, float(
-                            data_item[ns_metric_name]))
+                            data_item[citrix_metric_name]))
                     except Exception as e:
-                        logger.error('Caught exception while adding counter {} to {}: {}'.format(ns_metric_name, entity_name, str(e)))
+                        logger.error('Caught exception while adding counter {} to {}: {}'.format(citrix_metric_name, entity_name, str(e)))
 
                 yield g
         self.stats_access_pending = False
@@ -419,7 +378,7 @@ class CitrixAdcCollector(object):
     def collect_data(self, entity):
         '''Fetches stats from ADC using nitro call for different entity types.'''
 
-        url = '%s://%s/%s' % (self.protocol, self.nsip, entity)
+        url = '%s/%s' % (self.nsip, entity)
 
         try:
             status, data = self.get_entity_stat(url)
@@ -440,17 +399,17 @@ class CitrixAdcCollector(object):
             return self.FAILURE, None
 
     @retry(stop=stop_after_attempt(2), retry=retry_if_result(retry_get))
-    def ns_session_get(self, url):
+    def citrix_session_get(self, url):
         try:
-            r = self.ns_session.get(
-                url, verify=self.ns_cert, timeout=self.nitro_timeout)
+            r = self.citrix_session.get(
+                url, verify=self.citrix_cert, timeout=self.nitro_timeout)
             data = r.json()
             if data:
                 if 'errorcode' in data:
                     if data['errorcode'] == 0:
                         return self.SUCCESS, data
                     elif data['errorcode'] in [NSERR_SESSION_EXPIRED, NSERR_AUTHTIMEOUT]:
-                        self.ns_session_clear()
+                        self.citrix_session_clear()
                         if self.login():
                            return 'retry', None
                         else:
@@ -468,75 +427,98 @@ class CitrixAdcCollector(object):
     def get_entity_stat(self, url):
         '''Fetches stats from ADC using nitro using for a particular entity.'''
         try:
-            return self.ns_session_get(url)
+            return self.citrix_session_get(url)
         except RetryError as e:
             logger.error('Get Retries Exhausted {}'.format(e))
         except Exception as e:
             logger.error('Stat Access Failed {}'.format(e))
         return self.FAILURE, None
 
-    def ns_session_clear(self):
-        self.ns_session.close()
-        self.ns_session = None
-        self.ns_session_pending = False
+    def citrix_session_clear(self):
+        self.citrix_session.close()
+        self.citrix_session = None
+        self.citrix_session_pending = False
         self.stats_access_pending = False
 
     def login(self):
-        if self.ns_session:
+        if self.citrix_session:
             return True
 
         try:
-            if self.ns_session_login() == self.SUCCESS:
+            if self.citrix_session_login() == self.SUCCESS:
                 return True
         except RetryError as e:
             logger.error('Login Retries Exhausted {}'.format(e))
         except Exception as e:
             logger.error('Login Session Failed {}'.format(e))
 
-        self.ns_session_clear()
+        self.citrix_session_clear()
         return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_result(retry_login))
-    def ns_session_login(self):
+
+    def citrix_session_login(self):
         ''' Login to Citrix and get a session id for stat access'''
-        payload = {"login": {'username': self.username,
-                             'password': self.password}}
-        url = '%s://%s/nitro/v1/config/login' % (self.protocol, self.nsip)
-        self.ns_session = requests.Session()
-        self.ns_session_pending = True
+        krb_auth = HTTPKerberosAuth(principal="%s:%s") (self.password,self.username)
+        url = '%s' % (self.nsip)
+        self.citrix_session = requests.get(url, auth=krb_auth)
         try:
-            response = self.ns_session.post(url, json=payload,
-                                            verify=self.ns_cert, timeout=self.nitro_timeout)
+            response = self.citrix_session.post(url,verify=self.citrix_cert, timeout=self.nitro_timeout)
             data = response.json()
             if data['errorcode'] == 0:
-                logger.info("ADC Session Login Successful")
+                logger.info("Session Login Successful")
                 sessionid = data['sessionid']
-                self.ns_session.headers.update({'Set-Cookie': "sessionid=" + sessionid})
-                self.ns_session_pending = False
+                self.citrix_session.headers.update({'Set-Cookie': "sessionid=" + sessionid})
+                self.citrix_session_pending = False
                 return self.SUCCESS
             elif data['errorcode'] in [NSERR_SESSION_EXPIRED, NSERR_AUTHTIMEOUT]:
-                logger.error("ADC Session Login Failed: Retrying")
+                logger.error("Session Login Failed: Retrying")
                 return 'retry'
             elif data['errorcode'] in [NSERR_NOUSER, NSERR_INVALPASSWD]:
-                logger.error('Invalid username or password for ADC')
+                logger.error('Invalid username or password')
         except requests.exceptions.RequestException as err:
             logger.error('Session Login Error {}'.format(err))
         except Exception as e:
             logger.error('Login Session Failed : {}'.format(e))
         return self.FAILURE
+    # def citrix_session_login(self):
+    #     ''' Login to Citrix and get a session id for stat access'''
+    #     payload = {"login": {'username': self.username,
+    #                             'password': self.password}}
+    #     url = '%s' % (self.nsip)
+    #     self.citrix_session = requests.Session()
+    #     self.citrix_session_pending = True
+    #     try:
+    #         response = self.citrix_session.post(url, json=payload,
+    #                                         verify=self.citrix_cert, timeout=self.nitro_timeout)
+    #         data = response.json()
+    #         if data['errorcode'] == 0:
+    #             logger.info("ADC Session Login Successful")
+    #             sessionid = data['sessionid']
+    #             self.citrix_session.headers.update({'Set-Cookie': "sessionid=" + sessionid})
+    #             self.citrix_session_pending = False
+    #             return self.SUCCESS
+    #         elif data['errorcode'] in [NSERR_SESSION_EXPIRED, NSERR_AUTHTIMEOUT]:
+    #             logger.error("ADC Session Login Failed: Retrying")
+    #             return 'retry'
+    #         elif data['errorcode'] in [NSERR_NOUSER, NSERR_INVALPASSWD]:
+    #             logger.error('Invalid username or password for ADC')
+    #     except requests.exceptions.RequestException as err:
+    #         logger.error('Session Login Error {}'.format(err))
+    #     except Exception as e:
+    #         logger.error('Login Session Failed : {}'.format(e))
+    #     return self.FAILURE
 
     def populate_probe_status(self, status):
         label_names = []
         label_names.append('nsip')
-        g = GaugeMetricFamily("citrixadc_probe_success", "probe_success", labels=label_names)
+        g = GaugeMetricFamily("citrix_probe_success", "probe_success", labels=label_names)
         if status == self.FAILURE:
             g.add_metric([self.nsip], int("0"))
         else:
             g.add_metric([self.nsip], int("1"))
 
         return g
-
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -548,8 +530,6 @@ def main():
                         help='The port for the exporter to listen on. Default: 8888')
     parser.add_argument('--metric', required=False, action='append', type=str,
                         help='Collect only the metrics specified here, may be used multiple times.')
-    parser.add_argument('--secure', default='no', type=str,
-                        help='yes: Use HTTPS, no: Use HTTP. Default: no')
     parser.add_argument('--validate-cert', required=False, type=str,
                         help='yes: Validate Cert, no: Do not validate cert. Default: no')
     parser.add_argument('--cacert-path', required=False,
@@ -575,8 +555,8 @@ def main():
     if args.config_file:
         args = parseConfig(args)
 
-    # Get username and password of Citrix ADC
-    ns_user, ns_password = get_login_credentials(args)
+    # Get username and password of Citrix
+    citrix_user, citrix_password = get_login_credentials(args)
 
     # Wait for other containers to start.
     logger.info('Sleeping for %s seconds.' % args.start_delay)
@@ -585,11 +565,8 @@ def main():
     # Load the metrics file specifying stats to be collected
     metrics_json = get_metrics_file_data(args.metrics_file, args.metric)
 
-    # Get protocol type to access ADC
-    ns_protocol = get_ns_session_protocol(args)
-
     # Get cert validation args provided
-    ns_cert = get_cert_validation_args(args, ns_protocol)
+    citrix_cert = get_cert_validation_args(args)
 
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
     requests.packages.urllib3.disable_warnings(SubjectAltNameWarning)
@@ -602,9 +579,9 @@ def main():
     logger.info('Registering collector for %s' % args.target_nsip)
 
     try:
-        REGISTRY.register(CitrixAdcCollector(nsip=args.target_nsip, metrics=metrics_json, username=ns_user,
-                                             password=ns_password, protocol=ns_protocol,
-                                             nitro_timeout=args.timeout, ns_cert=ns_cert))
+        REGISTRY.register(citrixCollector(nsip=args.target_nsip, metrics=metrics_json, username=citrix_user,
+                                             password=citrix_password,
+                                             nitro_timeout=args.timeout, citrix_cert=citrix_cert))
     except Exception as e:
         logger.error('Invalid arguments! could not register collector for {}::{}'.format(args.target_nsip, e))
 
